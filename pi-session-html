@@ -7,6 +7,11 @@
 #   pi-session-html "phrase" -y           # no prompts: use first match, no confirm
 #   pi-session-html "phrase" --text       # print readable text instead of HTML
 #
+# HTML files are written to /tmp/pi-sessions/ as
+#   <session-date>_<session-title>.html
+# where the title is the session name (pi-web index), falling back to the
+# first user message. List and reopen them with the `pi-sessions` script.
+#
 # Steps it automates:
 #   1. grep all pi session files (~/.pi/agent/sessions/**/*.jsonl) for the phrase
 #   2. list matches (date, size, context snippet) and let you pick one
@@ -119,9 +124,59 @@ if [[ "$MODE" == text ]]; then
   exec pi-read-session "$FILE" "$PHRASE"
 fi
 
+session_title() {  # session_title <file> → filename-safe title
+  python3 - "$1" <<'PY'
+import json, os, re, sys
+path = sys.argv[1]
+
+name = ""
+idx_path = os.path.expanduser("~/.pi/agent/pi-web-session-index.json")
+try:
+    idx = json.load(open(idx_path))
+    info = idx.get("entries", {}).get(path, {}).get("info", {})
+    name = (info.get("name") or "").strip()
+except Exception:
+    pass
+
+if not name:
+    with open(path, errors="replace") as f:
+        for line in f:
+            try:
+                e = json.loads(line)
+            except Exception:
+                continue
+            if e.get("type") != "message":
+                continue
+            m = e.get("message", {})
+            if m.get("role") != "user":
+                continue
+            c = m.get("content")
+            texts = []
+            if isinstance(c, str):
+                texts.append(c)
+            elif isinstance(c, list):
+                for b in c:
+                    if isinstance(b, dict) and b.get("type") == "text":
+                        texts.append(b.get("text", ""))
+            t = " ".join(" ".join(texts).split())
+            if t and not t.startswith("<"):
+                name = t
+                break
+
+if not name:
+    name = os.path.basename(path)
+
+name = name[:60]
+name = re.sub(r"[^\w.-]+", "-", name, flags=re.UNICODE).strip("-.")
+print(name or "session")
+PY
+}
+
 if [[ -z "$OUT" ]]; then
   mkdir -p /tmp/pi-sessions
-  OUT="/tmp/pi-sessions/$(basename "${FILE%.jsonl}").html"
+  date_part=$(basename "$FILE" | cut -c1-19)
+  title=$(session_title "$FILE")
+  OUT="/tmp/pi-sessions/${date_part}_${title}.html"
 fi
 pi --export "$FILE" "$OUT"
 echo "Exported: $OUT"

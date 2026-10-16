@@ -24,7 +24,24 @@ Options:
 | `pi-session-html "phrase" -y` | no prompts (first match, no confirm) |
 | `pi-session-html "phrase" --text` | print readable text in the terminal instead of HTML |
 
+Exports are named `<session-date>_<session-title>.html`, e.g.
+`2026-10-03T16-58-02_We-need-a-refactor-of-our-code-most-recnt.html`.
+The title comes from the session name (pi-web index), falling back to the
+first user message. Re-exporting the same session overwrites its file.
+
 Requires: `pi` (coding agent CLI) and `pi-read-session` on PATH.
+
+## pi-sessions — list exported session HTML files, open one
+
+```
+pi-sessions            # list newest first, pick one, open in browser
+pi-sessions 2          # open the 2nd file in the list directly
+pi-sessions -y         # open the newest file, no prompt
+pi-sessions -l         # list only, don't open
+```
+
+Reads `/tmp/pi-sessions/*.html` (the output of `pi-session-html`). Note the
+HTML files live in `/tmp` — macOS clears it on reboot.
 
 ## pi-read-session — read a session JSONL as readable text
 
@@ -43,6 +60,7 @@ Both scripts are symlinked into `~/.pi/agent/bin` (already on PATH):
 
 ```bash
 ln -s "$PWD/pi-session-html" ~/.pi/agent/bin/pi-session-html
+ln -s "$PWD/pi-sessions"    ~/.pi/agent/bin/pi-sessions
 ln -s "$PWD/pi-read-session" ~/.pi/agent/bin/pi-read-session
 ```
 
