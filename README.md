@@ -45,3 +45,12 @@ Both scripts are symlinked into `~/.pi/agent/bin` (already on PATH):
 ln -s "$PWD/pi-session-html" ~/.pi/agent/bin/pi-session-html
 ln -s "$PWD/pi-read-session" ~/.pi/agent/bin/pi-read-session
 ```
+
+Note: `~/.pi/agent/bin` must be on your PATH (pi adds it). If a command
+is "not found" in an **already-open** terminal after installing, that is
+zsh's command cache — run `rehash` once, or just open a new terminal tab.
+
+Note: the shell finds commands via `PATH`, not via your current folder —
+being inside `helpful-scripts` makes no difference. To run a script from
+its own folder without PATH, use the explicit relative path:
+`./pi-session-html`.
