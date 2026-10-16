@@ -41,6 +41,24 @@ After exporting, the script injects viewer enhancements into the HTML:
 
 Requires: `pi` (coding agent CLI) and `pi-read-session` on PATH.
 
+## pi-session-import — import a session from a point into Pi Web
+
+Same search flow as `pi-session-html`, but instead of HTML it writes a
+trimmed copy of the session (active branch only, starting at the first
+entry matching the phrase) into `~/.pi/agent/sessions/--imports--/` —
+the folder Pi Web scans. Refresh Pi Web and it appears within ~30 s,
+showing your anchor message as its first message.
+
+```
+pi-session-import "Good that improvement was achieved"
+pi-session-import "phrase" -y   # no prompts
+pi-session-import "phrase" -n   # don't open the browser
+```
+
+Pi Web reads `~/.pi/agent/sessions/<folder>/*.jsonl` (one level of
+subfolders) — not /private/tmp. To remove an import from Pi Web again,
+delete the file from `--imports--`.
+
 ## pi-sessions — list exported session HTML files, open one
 
 ```
