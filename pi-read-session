@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""Read a pi session JSONL as readable text, optionally starting from a phrase.
+
+Usage:
+  pi-read-session <session.jsonl> [start-phrase] [--all] [--tools]
+
+  start-phrase   print only from the first message containing this text onward
+  --all          render abandoned branches too (default: active branch only)
+  --tools        include tool calls and results (truncated)
+
+The active branch is derived the same way pi does: from the last entry,
+following parentId links backwards.
+"""
+import json
+import sys
+from datetime import datetime, timezone
+
+
+def text_of(content):
+    """Extract text blocks from a message content (str or block list)."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for b in content:
+            if isinstance(b, dict) and b.get("type") == "text":
+                parts.append(b.get("text", ""))
+        return "\n".join(parts)
+    return ""
+
+
+def load(path):
+    entries = []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                e = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if e.get("id") or e.get("type") == "session":
+                entries.append(e)
+    return entries
+
+
+def active_chain(entries):
+    """Walk from the last entry backwards via parentId -> oldest ancestor."""
+    by_id = {e.get("id"): e for e in entries if e.get("id")}
+    last = None
+    for e in reversed(entries):
+        if e.get("id"):
+            last = e
+            break
+    chain = []
+    cur = last
+    seen = set()
+    while cur and cur.get("id") not in seen:
+        seen.add(cur.get("id"))
+        chain.append(cur)
+        cur = by_id.get(cur.get("parentId"))
+    chain.reverse()
+    return chain
+
+
+def trunc(s, n=400):
+    s = s.strip()
+    return s if len(s) <= n else s[:n] + f" … [+{len(s) - n} chars]"
+
+
+def render_entry(e, show_tools=False):
+    out = []
+    if e.get("type") != "message":
+        label = e.get("type", "?")
+        if label == "model_change":
+            out.append(f"--- [model → {e.get('provider','?')}:{e.get('modelId','?')}]")
+        elif label == "compaction":
+            out.append("--- [compaction / summary]")
+        return out
+    m = e.get("message", {})
+    role = m.get("role", "?")
+    ts = e.get("timestamp", "")[:19].replace("T", " ")
+    content = m.get("content")
+
+    if role == "user":
+        t = text_of(content).strip()
+        if t:
+            out.append(f"\n═══ USER · {ts} ═══\n{t}")
+    elif role == "assistant":
+        t = text_of(content).strip()
+        blocks = content if isinstance(content, list) else []
+        tools = [b for b in blocks if isinstance(b, dict) and b.get("type") == "toolCall"]
+        think = [b for b in blocks if isinstance(b, dict) and b.get("type") == "thinking"]
+        if t:
+            out.append(f"\n─── ASSISTANT · {ts} ───\n{t}")
+        if show_tools:
+            for tc in tools:
+                name = tc.get("arguments", {}).get("toolName") or tc.get("name") or "?"
+                args = json.dumps(tc.get("arguments", {}), ensure_ascii=False)
+                out.append(f"    [tool: {trunc(args, 200)}]")
+        elif tools:
+            out.append(f"    [{len(tools)} tool call(s) hidden — use --tools]")
+    elif role == "toolResult" and show_tools:
+        t = text_of(content).strip()
+        if t:
+            out.append(f"    [result: {trunc(t)}]")
+    return out
+
+
+def main():
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    flags = {a for a in sys.argv[1:] if a.startswith("--")}
+    if not args:
+        print(__doc__)
+        sys.exit(1)
+    path, start = args[0], (args[1] if len(args) > 1 else None)
+    entries = load(path)
+    chain = entries if "--all" in flags else active_chain(entries)
+
+    # locate start point
+    begin = 0
+    if start:
+        for i, e in enumerate(chain):
+            if start.lower() in json.dumps(e).lower():
+                begin = i
+                break
+        else:
+            print(f"(phrase not found on this branch — rendering whole session)", file=sys.stderr)
+
+    shown = 0
+    for e in chain[begin:]:
+        for line in render_entry(e, show_tools="--tools" in flags):
+            print(line)
+            shown += 1
+    if shown == 0:
+        print("(nothing to show)", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except BrokenPipeError:
+        sys.exit(0)

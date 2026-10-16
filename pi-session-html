@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# pi-session-html — find a pi coding-agent session by a phrase and open it as HTML.
+#
+# Usage:
+#   pi-session-html "phrase"              # search, pick, confirm, open HTML
+#   pi-session-html "phrase" out.html     # same, but write HTML to out.html
+#   pi-session-html "phrase" -y           # no prompts: use first match, no confirm
+#   pi-session-html "phrase" --text       # print readable text instead of HTML
+#
+# Steps it automates:
+#   1. grep all pi session files (~/.pi/agent/sessions/**/*.jsonl) for the phrase
+#   2. list matches (date, size, context snippet) and let you pick one
+#   3. after confirmation, export the session with `pi --export` to HTML
+#   4. open the HTML in the default browser
+set -euo pipefail
+
+SESSIONS_DIR="${HOME}/.pi/agent/sessions"
+AUTO=0
+MODE=html
+PHRASE=""
+OUT=""
+
+for arg in "$@"; do
+  case "$arg" in
+    -y|--yes)   AUTO=1 ;;
+    --text)     MODE=text ;;
+    -h|--help)  sed -n '2,14p' "$0"; exit 0 ;;
+    *)
+      if [[ -z "$PHRASE" ]]; then PHRASE="$arg"
+      elif [[ -z "$OUT" && "$arg" != -* ]]; then OUT="$arg"
+      fi ;;
+  esac
+done
+
+if [[ -z "$PHRASE" ]]; then
+  sed -n '2,14p' "$0"
+  exit 1
+fi
+
+# ── 1. Search ────────────────────────────────────────────────────────────────
+echo "Searching sessions for: \"$PHRASE\" …"
+MATCHES=()
+while IFS= read -r m; do MATCHES+=("$m"); done < <(grep -rilF --include='*.jsonl' -e "$PHRASE" "$SESSIONS_DIR" 2>/dev/null | sort || true)
+
+if [[ ${#MATCHES[@]} -eq 0 ]]; then
+  echo "No session contains \"$PHRASE\"."
+  exit 1
+fi
+
+# ── 2. List matches, pick one ────────────────────────────────────────────────
+snippet() {  # snippet <file> — first context around the phrase (plain text)
+  python3 - "$1" "$PHRASE" <<'PY'
+import json, sys
+path, phrase = sys.argv[1], sys.argv[2].lower()
+with open(path, errors="replace") as f:
+    for line in f:
+        if phrase not in line.lower():
+            continue
+        try:
+            e = json.loads(line)
+        except Exception:
+            continue
+        msg = e.get("message", {})
+        role = msg.get("role", e.get("type", "?"))
+        content = msg.get("content")
+        texts = []
+        if isinstance(content, str):
+            texts.append(content)
+        elif isinstance(content, list):
+            for b in content:
+                if isinstance(b, dict) and b.get("type") == "text":
+                    texts.append(b.get("text", ""))
+        blob = "\n".join(texts).replace("\n", " ")
+        i = blob.lower().find(phrase)
+        if i >= 0:
+            s, a = max(0, i - 50), min(len(blob), i + len(phrase) + 60)
+            print(f"      …{blob[s:a]}…  [{role}]")
+            break
+PY
+}
+
+if [[ ${#MATCHES[@]} -eq 1 ]] && [[ $AUTO -eq 1 ]]; then
+  PICK=0
+else
+  echo
+  echo "Found ${#MATCHES[@]} session(s):"
+  for i in "${!MATCHES[@]}"; do
+    f="${MATCHES[$i]}"
+    date=$(basename "$f" | cut -c1-19 | tr 'T' ' ')
+    size=$(du -h "$f" | cut -f1 | tr -d ' ')
+    printf "  [%d] %s   (%s)\n" $((i + 1)) "$date" "$size"
+    snippet "$f"
+  done
+  echo
+  if [[ $AUTO -eq 1 ]]; then
+    PICK=0
+    echo "(auto-picking first match)"
+  else
+    read -rp "Which session? [1-${#MATCHES[@]}, Enter=1, q=quit] " ans
+    [[ "${ans:-1}" =~ ^[qQ]$ ]] && exit 0
+    PICK=$(( ${ans:-1} - 1 ))
+    if (( PICK < 0 || PICK >= ${#MATCHES[@]} )); then
+      echo "Invalid choice."; exit 1
+    fi
+  fi
+fi
+FILE="${MATCHES[$PICK]}"
+echo
+echo "Selected: $FILE"
+
+# ── 3. Confirm ───────────────────────────────────────────────────────────────
+if [[ $AUTO -eq 0 ]]; then
+  read -rp "Proceed? [Y/n] " yn
+  [[ "${yn:-y}" =~ ^[nN] ]] && exit 0
+fi
+
+# ── 4. Render ────────────────────────────────────────────────────────────────
+if [[ "$MODE" == text ]]; then
+  exec pi-read-session "$FILE" "$PHRASE"
+fi
+
+if [[ -z "$OUT" ]]; then
+  mkdir -p /tmp/pi-sessions
+  OUT="/tmp/pi-sessions/$(basename "${FILE%.jsonl}").html"
+fi
+pi --export "$FILE" "$OUT"
+echo "Exported: $OUT"
+
+# ── 5. Open in browser ───────────────────────────────────────────────────────
+if command -v open >/dev/null 2>&1; then
+  open "$OUT"
+elif command -v xdg-open >/dev/null 2>&1; then
+  xdg-open "$OUT"
+fi
