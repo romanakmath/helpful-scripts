@@ -179,6 +179,133 @@ if [[ -z "$OUT" ]]; then
   OUT="/tmp/pi-sessions/${date_part}_${title}.html"
 fi
 pi --export "$FILE" "$OUT"
+
+# ── 5. Inject enhancements (collapsible thinking + code blocks) ─────────
+inject_enhancers() {  # inject_enhancers <html-file>
+  python3 - "$1" <<'PY'
+import sys
+
+path = sys.argv[1]
+html = open(path, encoding="utf-8").read()
+if 'id="pcx-script"' in html:
+    sys.exit(0)  # already injected
+
+STYLE = """<style id=\"pcx-style\">
+.pc-wrap{margin:.5em 0;border:1px solid var(--border,#999);border-radius:6px;overflow:hidden}
+.pc-head{cursor:pointer;user-select:none;padding:3px 10px;font-size:11px;font-family:ui-monospace,Menlo,monospace;opacity:.65;background:rgba(127,127,127,.08)}
+.pc-head:hover{opacity:1}
+.pc-body{overflow:hidden}
+.pc-wrap.collapsed .pc-body{max-height:11em;-webkit-mask-image:linear-gradient(#000 60%,transparent);mask-image:linear-gradient(#000 60%,transparent)}
+.pc-wrap.collapsed .pc-body pre{margin-bottom:0}
+.pcx-btn{position:fixed;bottom:14px;right:14px;z-index:99999;cursor:pointer;padding:6px 12px;border:1px solid var(--border,#999);border-radius:999px;font-size:12px;background:rgba(127,127,127,.12);backdrop-filter:blur(4px)}
+.pcx-btn:hover{background:rgba(127,127,127,.25)}
+</style>"""
+
+SCRIPT = """<script id=\"pcx-script\">
+(function(){
+'use strict';
+function sel(){return window.getSelection().toString()}
+// thinking: click a block to toggle it
+ document.addEventListener('click',function(e){
+  var tb=e.target.closest?e.target.closest('.thinking-block'):null;
+  if(!tb||sel())return;
+  var txt=tb.querySelector('.thinking-text'),col=tb.querySelector('.thinking-collapsed');
+  if(!txt)return;
+  var collapsed=txt.style.display==='none';
+  txt.style.display=collapsed?'':'none';
+  if(col)col.style.display=collapsed?'none':'block';
+});
+// code blocks: wrap and collapse
+function langOf(pre){
+  var c=pre.querySelector('code[class*="language-"]');
+  var m=c&&c.className.match(/language-([\\w+#.-]+)/);
+  return m?m[1]:'code';
+}
+function setHead(head,collapsed){
+  head.textContent=head.textContent.replace(/^[\\u25b8\\u25be]/,collapsed?'\\u25b8':'\\u25be')
+    .replace(/expand|collapse/,collapsed?'expand':'collapse');
+}
+function enhance(pre){
+  if(pre.getAttribute('data-pcx'))return;
+  pre.setAttribute('data-pcx','1');
+  if(pre.closest&&pre.closest('.pc-wrap'))return;
+  var wrap=document.createElement('div');wrap.className='pc-wrap collapsed';
+  var head=document.createElement('div');head.className='pc-head';
+  var n=pre.textContent.split('\\n').length;
+  head.textContent='\\u25b8 '+langOf(pre)+' \\u00b7 '+n+' lines \\u00b7 click to expand';
+  var body=document.createElement('div');body.className='pc-body';
+  pre.parentNode.insertBefore(wrap,pre);
+  body.appendChild(pre);wrap.appendChild(head);wrap.appendChild(body);
+  head.addEventListener('click',function(){
+    if(sel())return;
+    wrap.classList.toggle('collapsed');
+    setHead(head,wrap.classList.contains('collapsed'));
+  });
+}
+var pending=new Set(),scheduled=false;
+function flush(){scheduled=false;pending.forEach(enhance);pending.clear()}
+function queue(pre){pending.add(pre);if(!scheduled){scheduled=true;requestAnimationFrame(flush)}}
+var mo=new MutationObserver(function(muts){
+  muts.forEach(function(m){
+    (m.addedNodes||[]).forEach(function(n){
+      if(!n.querySelectorAll)return;
+      if(n.tagName==='PRE')queue(n);
+      else Array.prototype.forEach.call(n.querySelectorAll('pre'),function(p){if(!p.closest('.pc-wrap'))queue(p)});
+    });
+  });
+});
+mo.observe(document.documentElement,{childList:true,subtree:true});
+// thinking: default collapsed as blocks appear
+var tmo=new MutationObserver(function(muts){
+  muts.forEach(function(m){
+    (m.addedNodes||[]).forEach(function(n){
+      if(!n.querySelectorAll)return;
+      var tbs=n.classList&&n.classList.contains('thinking-block')?[n]:n.querySelectorAll('.thinking-block');
+      Array.prototype.forEach.call(tbs,function(tb){
+        if(tb.getAttribute('data-pcx'))return;
+        tb.setAttribute('data-pcx','1');
+        var txt=tb.querySelector('.thinking-text'),col=tb.querySelector('.thinking-collapsed');
+        if(txt){txt.style.display='none';if(col)col.style.display='block';}
+      });
+    });
+  });
+});
+tmo.observe(document.documentElement,{childList:true,subtree:true});
+// floating collapse/expand-all button
+window.addEventListener('DOMContentLoaded',function(){
+  var btn=document.createElement('div');btn.className='pcx-btn';btn.textContent='\\u25b8 code';
+  btn.addEventListener('click',function(){
+    if(sel())return;
+    var wraps=document.querySelectorAll('.pc-wrap');
+    var anyOpen=Array.prototype.some.call(wraps,function(w){return !w.classList.contains('collapsed')});
+    Array.prototype.forEach.call(wraps,function(w){
+      w.classList.toggle('collapsed',anyOpen);
+      var h=w.querySelector('.pc-head');if(h)setHead(h,anyOpen);
+    });
+    btn.textContent=anyOpen?'\\u25b8 code':'\\u25be code';
+  });
+  document.body.appendChild(btn);
+});
+})();
+</script>"""
+
+if "</head>" in html:
+    html = html.replace("</head>", STYLE + "</head>", 1)
+else:
+    html = STYLE + html
+if "</body>" in html:
+    html = html.replace("</body>", SCRIPT + "</body>", 1)
+else:
+    html = html + SCRIPT
+open(path, "w", encoding="utf-8").write(html)
+print("enhancements injected: collapsible thinking + code blocks")
+PY
+}
+
+if [[ -f "$OUT" ]]; then
+  inject_enhancers "$OUT"
+fi
+
 echo "Exported: $OUT"
 
 # ── 5. Open in browser ───────────────────────────────────────────────────────

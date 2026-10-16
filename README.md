@@ -29,6 +29,16 @@ Exports are named `<session-date>_<session-title>.html`, e.g.
 The title comes from the session name (pi-web index), falling back to the
 first user message. Re-exporting the same session overwrites its file.
 
+After exporting, the script injects viewer enhancements into the HTML:
+
+- **Thinking blocks** are collapsed by default (`Thinking …`), like Pi Web;
+  click a block to expand just that one.
+- **Code blocks** are collapsed to a small preview (faded); click the header
+  (`▸ python · 42 lines · click to expand`) to open one.
+- A floating **`▸ code`** button (bottom right) collapses/expands all code
+  blocks at once. The viewer's own toolbar still has *Toggle thinking* and
+  *Toggle tools* for global control.
+
 Requires: `pi` (coding agent CLI) and `pi-read-session` on PATH.
 
 ## pi-sessions — list exported session HTML files, open one
