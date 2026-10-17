@@ -49,6 +49,12 @@ entry matching the phrase) into `~/.pi/agent/sessions/--imports--/` —
 the folder Pi Web scans. Refresh Pi Web and it appears within ~30 s,
 showing your anchor message as its first message.
 
+Pi Web groups sessions by the `cwd` in the session header, **not** by the
+disk subfolder — so imports are stamped with the synthetic project path
+`/private/tmp/pi-web-imports` and appear as their own folder in the UI,
+never inside the source project. Override with
+`PI_SESSION_IMPORT_PROJECT=/some/path pi-session-import …`.
+
 ```
 pi-session-import "Good that improvement was achieved"
 pi-session-import "phrase" -y   # no prompts

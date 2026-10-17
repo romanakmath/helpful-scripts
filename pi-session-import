@@ -14,6 +14,11 @@ set -euo pipefail
 
 SESSIONS_DIR="${HOME}/.pi/agent/sessions"
 IMPORT_DIR="${SESSIONS_DIR}/--imports--"
+# Synthetic project path stamped into the import's header — Pi Web groups
+# sessions by this cwd, so imports appear as their own folder in the UI
+# instead of mixing into the source project (e.g. Code/trading).
+# Override with: PI_SESSION_IMPORT_PROJECT=/some/path pi-session-import …
+IMPORT_PROJECT="${PI_SESSION_IMPORT_PROJECT:-/private/tmp/pi-web-imports}"
 PI_WEB_URL="http://127.0.0.1:30141"
 AUTO=0
 OPEN=1
@@ -111,10 +116,10 @@ if [[ $AUTO -eq 0 ]]; then
 fi
 
 # ── 4. Build trimmed session and drop it into Pi Web's sessions folder ──────
-OUT=$(python3 - "$FILE" "$PHRASE" "$IMPORT_DIR" <<'PY'
+OUT=$(python3 - "$FILE" "$PHRASE" "$IMPORT_DIR" "$IMPORT_PROJECT" <<'PY'
 import json, os, re, sys, uuid
 
-src, phrase, import_dir = sys.argv[1], sys.argv[2], sys.argv[3]
+src, phrase, import_dir, import_project = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 needle = phrase.lower()
 
 entries = []
@@ -153,7 +158,9 @@ header = next((dict(e) for e in entries if e.get("type") == "session"),
               {"type": "session", "version": 3})
 header["id"] = str(uuid.uuid4())
 header["timestamp"] = picked[0].get("timestamp") or header.get("timestamp")
-header.setdefault("cwd", os.path.expanduser("~"))
+# Pi Web groups sessions by cwd — use the dedicated imports project so the
+# import shows up as its own folder, never inside the source project.
+header["cwd"] = import_project
 header.pop("parentSessionPath", None)
 header["name"] = "IMPORT: " + phrase.strip()[:60]
 
@@ -179,6 +186,7 @@ PY
 OUT_PATH=$(echo "$OUT" | head -1)
 echo "$OUT" | tail -n +2 >&2
 echo "Imported: $OUT_PATH"
+echo "Pi Web folder: $IMPORT_PROJECT"
 
 # ── 5. Open Pi Web ───────────────────────────────────────────────────────────
 if [[ $OPEN -eq 1 ]]; then
