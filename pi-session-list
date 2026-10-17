@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+"""List where a phrase occurs across pi sessions — read-only.
+
+Usage:
+  pi-session-list "phrase" [--all] [-n N]
+
+Searches every session under ~/.pi/agent/sessions/ (subfolders and the
+--imports-- review folder) and prints, per matching session: its label
+(cwd), title, message count, and the occurrences of the phrase with
+timestamp, role and a snippet — plus the full JSONL path.
+
+  --all   show every occurrence (default: first 3 per session, "+N more")
+  -n N    snippets per session (default 3)
+
+Matching is case-insensitive and scans raw entries (messages, tool calls,
+results, summaries) — the same semantics as pi-read-session's search.
+"""
+import json
+import os
+import sys
+
+SESSIONS_DIR = os.path.join(os.path.expanduser("~"), ".pi/agent/sessions")
+
+
+def iter_session_files():
+    """All *.jsonl under sessions/<subfolder>/, one level, following symlinks."""
+    try:
+        subs = os.scandir(SESSIONS_DIR)
+    except FileNotFoundError:
+        return
+    for sub in subs:
+        if not sub.is_dir(follow_symlinks=True):
+            continue
+        try:
+            files = os.scandir(sub.path)
+        except OSError:
+            continue
+        for f in files:
+            if f.name.endswith(".jsonl") and f.is_file(follow_symlinks=True):
+                yield f.path
+
+
+def load(path):
+    entries = []
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                e = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if e.get("id") or e.get("type") == "session":
+                entries.append(e)
+    return entries
+
+
+def text_of(content):
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            b.get("text", "") for b in content
+            if isinstance(b, dict) and b.get("type") == "text")
+    return ""
+
+
+def role_label(e):
+    if e.get("type") != "message":
+        return e.get("type", "?")
+    return e.get("message", {}).get("role", "?") or "?"
+
+
+def flat_text(e):
+    """All human-readable text in an entry (message text, tool calls, results)."""
+    m = e.get("message", {})
+    parts = [text_of(m.get("content"))]
+    c = m.get("content")
+    if isinstance(c, list):
+        for b in c:
+            if isinstance(b, dict) and b.get("type") == "toolCall":
+                parts.append(json.dumps(b.get("arguments", {}), ensure_ascii=False))
+    return "\n".join(p for p in parts if p)
+
+
+def snippet(s, n=160):
+    s = " ".join(s.split())
+    i = s.lower().find(PHRASE_LOW)
+    if i > 40:
+        s = "…" + s[i - 40:]
+    return s if len(s) <= n else s[:n] + " …"
+
+
+def main():
+    global PHRASE_LOW
+    args, flags, n_show = [], set(), 3
+    i = 1
+    while i < len(sys.argv):
+        a = sys.argv[i]
+        if a in ("--all", "-a"):
+            flags.add("--all")
+        elif a in ("-n",):
+            n_show = int(sys.argv[i + 1]); i += 1
+        elif a.startswith("-n"):
+            n_show = int(a[2:])
+        elif a in ("-h", "--help"):
+            print(__doc__); sys.exit(0)
+        elif not a.startswith("-"):
+            args.append(a)
+        i += 1
+    if not args:
+        print(__doc__); sys.exit(1)
+    phrase = args[0]
+    PHRASE_LOW = phrase.lower()
+    only_msgs = "--messages" in flags
+
+    files = []
+    for p in iter_session_files():
+        try:
+            files.append((os.path.getmtime(p), p))
+        except OSError:
+            pass
+    files.sort(reverse=True)  # newest first
+
+    total_hits, hit_files = 0, 0
+    for mtime, path in files:
+        entries = load(path)
+        header = next((e for e in entries if e.get("type") == "session"), {})
+        label = header.get("cwd", "?")
+        msgs = sum(1 for e in entries if e.get("type") == "message")
+
+        hits = []
+        for idx, e in enumerate(entries):
+            if PHRASE_LOW in flat_text(e).lower() or PHRASE_LOW in json.dumps(e).lower():
+                hits.append((idx, e))
+        if not hits:
+            continue
+        hit_files += 1
+        total_hits += len(hits)
+
+        title = ""
+        for e in entries:
+            if e.get("type") == "message" and e.get("message", {}).get("role") == "user":
+                t = text_of(e["message"].get("content")).strip()
+                if t and not t.startswith("<"):
+                    title = " ".join(t.split())[:70]
+                    break
+        first_ts = next((e.get("timestamp", "")[:10] for e in entries if e.get("timestamp")), "?")
+
+        print(f"\n● {os.path.basename(path)}")
+        print(f"  label: {label}")
+        if title:
+            print(f"  title: {title}")
+        print(f"  {first_ts} · {msgs} messages · {len(hits)} match(es)")
+        shown = hits if "--all" in flags else hits[:n_show]
+        for idx, e in shown:
+            ts = e.get("timestamp", "")[:19].replace("T", " ")
+            if e.get("type") == "session":
+                body = f"(session header · name: {e.get('name', '?')})"
+            else:
+                body = flat_text(e).strip() or "(match inside raw entry — tool metadata)"
+            print(f"   {idx:>5}. {ts}  {role_label(e):<10} {snippet(body)}")
+        hidden = len(hits) - len(shown)
+        if hidden > 0:
+            print(f"   … +{hidden} more  (--all to show)")
+        print(f"  path: {path}")
+
+    print(f"\n{total_hits} match(es) in {hit_files} session(s) "
+          f"(scanned {len(files)} sessions in {SESSIONS_DIR})")
+    if hit_files == 0:
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except BrokenPipeError:
+        sys.exit(0)

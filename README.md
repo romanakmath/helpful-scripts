@@ -78,6 +78,38 @@ Pi Web reads `~/.pi/agent/sessions/<folder>/*.jsonl` (one level of
 subfolders, symlinks followed). To remove an import from Pi Web again,
 delete the file from `pi-review-sessions`.
 
+## pi-session-list — find which sessions contain a phrase (read-only)
+
+```
+pi-session-list "phrase" [--all] [-n N]
+```
+
+Searches every session under `~/.pi/agent/sessions/` (all project folders
+and the `pi-review-sessions` imports) and prints, per matching session:
+
+- its Pi Web label (`cwd`), title, date and message count
+- every occurrence: entry number, timestamp, role, and a snippet
+- the full JSONL path
+
+`--all` shows every occurrence instead of the first 3 per session;
+`-n N` changes that number. Matching is case-insensitive across message
+text, tool calls, results, and session headers — the same semantics as
+`pi-read-session`. Nothing is written; pure lookup.
+
+```
+$ pi-session-list "Good that improvement was achieved"
+● 2026-10-03T16-58-02-579Z_….jsonl
+  label: /Users/roman/Dropbox/Code/trading
+  title: We need a refactor of our code …
+  2026-10-03 · 4181 messages · 1 match(es)
+     1842. 2026-10-11 11:44:58  user  Good that improvement was achieved! …
+  path: /Users/roman/.pi/agent/sessions/--Users-roman-Dropbox-Code-trading--/….jsonl
+```
+
+Combine with the other tools: `pi-session-list` to locate →
+`pi-read-session <path> "phrase"` to read from there → `pi-session-html`
+or `pi-session-import` to export/import.
+
 ## pi-sessions — list exported session HTML files, open one
 
 ```
@@ -109,6 +141,7 @@ Both scripts are symlinked into `~/.pi/agent/bin` (already on PATH):
 ln -s "$PWD/pi-session-html" ~/.pi/agent/bin/pi-session-html
 ln -s "$PWD/pi-sessions"    ~/.pi/agent/bin/pi-sessions
 ln -s "$PWD/pi-read-session" ~/.pi/agent/bin/pi-read-session
+ln -s "$PWD/pi-session-list" ~/.pi/agent/bin/pi-session-list
 ```
 
 Note: `~/.pi/agent/bin` must be on your PATH (pi adds it). If a command
