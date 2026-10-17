@@ -35,6 +35,9 @@
 #   pi-session-import "phrase" -n 50      # max counted messages (default 50;
 #                                         #   >50 breaks the topmost-rectangle
 #                                         #   guarantee — Pi Web loads last 50)
+#   pi-session-import "phrase" --100      # shorthand for -n 100 (longer tail;
+#                                         #   opens scrolled to the end — use
+#                                         #   the minimap to scroll up)
 set -euo pipefail
 
 SESSIONS_DIR="${HOME}/.pi/agent/sessions"
@@ -54,6 +57,7 @@ for arg in "$@"; do
     -y|--yes)  AUTO=1 ;;
     -n|--max-messages) MAX_MESSAGES="$2"; shift 2 ;;
     -n*) MAX_MESSAGES="${arg#-n}" ;;
+    --[0-9]*) MAX_MESSAGES="${arg#--}" ;;
     -h|--help) sed -n '2,34p' "$0"; exit 0 ;;
     *) if [[ -z "$PHRASE" && "$arg" != -* ]]; then PHRASE="$arg"; fi ;;
   esac
@@ -64,8 +68,12 @@ if [[ -z "$PHRASE" ]]; then
   exit 1
 fi
 if ! [[ "$MAX_MESSAGES" =~ ^[0-9]+$ ]] || (( MAX_MESSAGES < 1 )); then
-  echo "Invalid -n value: $MAX_MESSAGES" >&2
+  echo "Invalid tail length: $MAX_MESSAGES (use -n N or --N, e.g. --100)" >&2
   exit 1
+fi
+if (( MAX_MESSAGES > 50 )); then
+  echo "note: tail=$MAX_MESSAGES — Pi Web loads only the last 50 counted messages on open;"
+  echo "      the phrase turn may be above the loaded window (scroll up or use the minimap)."
 fi
 
 # ── 1. Search ────────────────────────────────────────────────────────────────

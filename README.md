@@ -66,13 +66,21 @@ Override the label with:
 
 ```
 pi-session-import "Good that improvement was achieved"
-pi-session-import "phrase" -y   # no prompts
+pi-session-import "phrase" -y     # no prompts
+pi-session-import "phrase" --100  # longer tail: keep ~100 counted messages
+pi-session-import "phrase" -n 250 # same thing, long form
 ```
 
+Tail length defaults to **50 counted messages** — that is exactly what Pi
+Web loads when a session opens, so with the default the anchor message is
+always visible on open. With `--N` above 50 the import keeps more history,
+but Pi Web still loads only the last 50 on open — the anchor sits above
+the initially loaded window; scroll up or click the topmost minimap
+rectangle. The whole turn containing the phrase is always kept intact,
+so the actual count can exceed N when that turn alone is larger.
+
 Does not open a browser — it only imports. The picker shows each match's
-project directory and message count to help you choose. The script
-recreates the imports project directory if it is missing (e.g. after a
-reboot, since /private/tmp is wiped).
+project directory and message count to help you choose.
 
 Pi Web reads `~/.pi/agent/sessions/<folder>/*.jsonl` (one level of
 subfolders, symlinks followed). To remove an import from Pi Web again,
