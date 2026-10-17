@@ -58,8 +58,12 @@ never inside the source project. Override with
 ```
 pi-session-import "Good that improvement was achieved"
 pi-session-import "phrase" -y   # no prompts
-pi-session-import "phrase" -n   # don't open the browser
 ```
+
+Does not open a browser — it only imports. The picker shows each match's
+project directory and message count to help you choose. The script
+recreates the imports project directory if it is missing (e.g. after a
+reboot, since /private/tmp is wiped).
 
 Pi Web reads `~/.pi/agent/sessions/<folder>/*.jsonl` (one level of
 subfolders) — not /private/tmp. To remove an import from Pi Web again,
