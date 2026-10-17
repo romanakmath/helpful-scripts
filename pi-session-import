@@ -1,18 +1,40 @@
 #!/usr/bin/env bash
-# pi-session-import — put a pi session starting at a chosen point into Pi Web.
+# pi-session-import — put a pi session starting at a chosen point into Pi Web,
+# trimmed so the passage is the FIRST (topmost) rectangle in the chat minimap.
 #
 # Same search flow as pi-session-html, but instead of HTML it writes a trimmed
-# copy of the session (active branch, from the first entry matching the phrase
-# onward) into the review folder. The folder is symlinked from
+# copy of the session into the review folder. The folder is symlinked from
 # ~/.pi/agent/sessions/--imports-- so Pi Web discovers the files, and its path
 # is stamped as the session's cwd so Pi Web groups imports under their own
-# folder "pi-review-sessions" — one place to edit, import, and review
-# sessions from different projects. Refresh Pi Web and the import appears
-# within ~30 s.
+# folder "pi-review-sessions". Refresh Pi Web and the import appears within
+# ~30 s.
+#
+# Pi Web display rules (why the trim works):
+#   - GET /api/sessions/<id>/context returns the TAIL of the active branch:
+#     the last 50 "counted" entries (user+assistant messages + compactions;
+#     tool results/other entries ride along free). ?tail=N overrides, cap 1000.
+#   - The session opens scrolled to the BOTTOM (latest message).
+#   - The minimap rail (right edge) draws one rectangle per "turn" = one user
+#     message + its assistant replies, and only for messages loaded in the DOM.
+#     Clicking a rectangle scrolls that turn to ~30% from the top.
+#   - Therefore: an import whose TOTAL counted entries ≤ 50 loads completely
+#     on open, and its topmost rectangle is the first turn = the phrase turn.
+#
+# The import starts at the TURN containing the phrase (walks back to the user
+# message that began that turn, so the phrase's assistant reply is reachable
+# via the minimap preview "A" button) and keeps up to -n counted messages
+# (default 50), cutting whole turns from the END when needed.
+#
+# Output: the final summary prints a `STAT counted=… turns=…` line, then the
+# label "The exported new JSONL file is saved in:" followed by the full path of
+# the imported .jsonl — paste that path into another conversation's prompt.
 #
 # Usage:
-#   pi-session-import "phrase"      # search, pick, confirm, import (no browser)
-#   pi-session-import "phrase" -y   # no prompts (first match, no confirm)
+#   pi-session-import "phrase"            # search, pick, import
+#   pi-session-import "phrase" -y         # no picker (auto-picks first match)
+#   pi-session-import "phrase" -n 50      # max counted messages (default 50;
+#                                         #   >50 breaks the topmost-rectangle
+#                                         #   guarantee — Pi Web loads last 50)
 set -euo pipefail
 
 SESSIONS_DIR="${HOME}/.pi/agent/sessions"
@@ -24,18 +46,25 @@ IMPORT_DIR="${SESSIONS_DIR}/--imports--"
 IMPORT_PROJECT="${PI_SESSION_IMPORT_PROJECT:-/Users/roman/Dropbox/Code/trading/pi-review-sessions}"
 PI_WEB_URL="http://127.0.0.1:30141"
 AUTO=0
+MAX_MESSAGES=50
 PHRASE=""
 
 for arg in "$@"; do
   case "$arg" in
     -y|--yes)  AUTO=1 ;;
-    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+    -n|--max-messages) MAX_MESSAGES="$2"; shift 2 ;;
+    -n*) MAX_MESSAGES="${arg#-n}" ;;
+    -h|--help) sed -n '2,34p' "$0"; exit 0 ;;
     *) if [[ -z "$PHRASE" && "$arg" != -* ]]; then PHRASE="$arg"; fi ;;
   esac
 done
 
 if [[ -z "$PHRASE" ]]; then
-  sed -n '2,14p' "$0"
+  sed -n '2,34p' "$0"
+  exit 1
+fi
+if ! [[ "$MAX_MESSAGES" =~ ^[0-9]+$ ]] || (( MAX_MESSAGES < 1 )); then
+  echo "Invalid -n value: $MAX_MESSAGES" >&2
   exit 1
 fi
 
@@ -134,20 +163,15 @@ FILE="${MATCHES[$PICK]}"
 echo
 echo "Selected: $FILE"
 
-# ── 3. Confirm ───────────────────────────────────────────────────────────────
-if [[ $AUTO -eq 0 ]]; then
-  read -rp "Import into Pi Web starting at \"$PHRASE\"? [Y/n] " yn
-  [[ "${yn:-y}" =~ ^[nN] ]] && exit 0
-fi
-
-# ── 4. Build trimmed session and drop it into Pi Web's sessions folder ──────
+# ── 3. Build trimmed session and drop it into Pi Web's sessions folder ──────
 # Pi Web checks that the project directory exists before running an agent.
 mkdir -p "$IMPORT_PROJECT"
 
-OUT=$(python3 - "$FILE" "$PHRASE" "$IMPORT_DIR" "$IMPORT_PROJECT" <<'PY'
+OUT=$(python3 - "$FILE" "$PHRASE" "$IMPORT_DIR" "$IMPORT_PROJECT" "$MAX_MESSAGES" <<'PY'
 import json, os, re, sys, uuid
 
-src, phrase, import_dir, import_project = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+src, phrase, import_dir, import_project, max_n = (
+    sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], int(sys.argv[5]))
 needle = phrase.lower()
 
 entries = []
@@ -170,50 +194,115 @@ while cur and cur.get("id") not in seen:
     chain.append(cur)
     cur = by_id.get(cur.get("parentId"))
 chain.reverse()
+# drop the session header entry — we write our own
+chain = [e for e in chain if e.get("type") != "session"]
+
+def is_counted(e):
+    # Pi Web's tail counts user/assistant messages + compactions
+    if e.get("type") == "compaction":
+        return True
+    if e.get("type") == "message":
+        return e.get("message", {}).get("role") in ("user", "assistant")
+    return False
+
+def is_turn_start(e):
+    # Pi Web minimap: a turn starts at a user message, a compaction, or a
+    # subagent-notification custom message; assistant replies join that turn.
+    if e.get("type") == "message":
+        return e.get("message", {}).get("role") == "user"
+    if e.get("type") == "compaction":
+        return True
+    if e.get("type") == "custom_message":
+        return e.get("customType") in ("pi-web:subagent-notification", "compaction")
+    return False
 
 # start at the first active-branch entry containing the phrase
-start = 0
+start = None
 for i, e in enumerate(chain):
     if needle in json.dumps(e).lower():
         start = i
         break
-else:
-    print("(phrase not on active branch — importing the whole session)", file=sys.stderr)
+if start is None:
+    print("(phrase not on active branch — importing from session start)", file=sys.stderr)
+    start = 0
 
-picked = chain[start:]
+# walk back to the start of the turn containing the phrase, so the phrase's
+# assistant reply is attached to a minimap rectangle (preview "A" button)
+while start > 0 and not is_turn_start(chain[start]):
+    start -= 1
+
+# keep whole turns from there, until the counted-message budget is used up
+kept, counted, turns = [], 0, 0
+for i in range(start, len(chain)):
+    e = chain[i]
+    if is_turn_start(e) and turns > 0 and counted >= max_n:
+        break  # budget full — cut at this turn boundary
+    kept.append(e)
+    if is_turn_start(e):
+        turns += 1
+    if is_counted(e):
+        counted += 1
+
+dropped = sum(1 for e in chain[start:] if is_counted(e)) - counted
 
 header = next((dict(e) for e in entries if e.get("type") == "session"),
               {"type": "session", "version": 3})
-header["id"] = str(uuid.uuid4())
-header["timestamp"] = picked[0].get("timestamp") or header.get("timestamp")
+header["timestamp"] = kept[0].get("timestamp") or header.get("timestamp")
 # Pi Web groups sessions by cwd — use the dedicated imports project so the
 # import shows up as its own folder, never inside the source project.
 header["cwd"] = import_project
 header.pop("parentSessionPath", None)
 header["name"] = "IMPORT: " + phrase.strip()[:60]
 
-first = dict(picked[0])
-first["parentId"] = None
-out_entries = [header, first] + picked[1:]
+first = dict(kept[0])
+first["parentId"] = None  # hasMore=false → nothing hidden behind "load earlier"
+out_entries = [header, first] + kept[1:]
 
 os.makedirs(import_dir, exist_ok=True)
 slug = re.sub(r"[^\w.-]+", "-", phrase.strip()[:40]).strip("-.") or "session"
 date_part = os.path.basename(src)[:19]
 out_path = os.path.join(import_dir, f"{date_part}_import-{slug}.jsonl")
+
+# Stable session id derived from the output path. Re-importing the same
+# source+phrase rewrites the same file with the SAME id — Pi Web merges its
+# session list by id, so a fresh uuid4 per run would leave every previously
+# opened copy behind as a duplicate entry.
+header["id"] = str(uuid.uuid5(uuid.NAMESPACE_URL, "pi-session-import:" + out_path))
 with open(out_path, "w", encoding="utf-8") as w:
     for e in out_entries:
         w.write(json.dumps(e, ensure_ascii=False) + "\n")
 
-n_msgs = sum(1 for e in out_entries if e.get("type") == "message")
 print(out_path)
-print(f"entries: {len(out_entries)} ({n_msgs} messages), starting {picked[0].get('timestamp','?')}", file=sys.stderr)
+print(f"STAT counted={counted} turns={turns} dropped_end={dropped} "
+      f"phrase_is_first_turn={'yes' if is_turn_start(kept[0]) else 'no'} "
+      f"start_ts={kept[0].get('timestamp','?')}")
 PY
 )
 
-# first printed line is the path, rest is stderr info
+# python prints two stdout lines: the output path, then one STAT line
 OUT_PATH=$(echo "$OUT" | head -1)
-echo "$OUT" | tail -n +2 >&2
-echo "Imported: $OUT_PATH"
-echo "Pi Web folder: $IMPORT_PROJECT"
+STATS=$(echo "$OUT" | grep '^STAT ') || STATS=""
 
+COUNTED=$(echo "$STATS" | sed -n 's/.*counted=\([0-9]*\).*/\1/p')
+DROPPED=$(echo "$STATS" | sed -n 's/.*dropped_end=\([0-9]*\).*/\1/p')
+FIRST_TURN=$(echo "$STATS" | sed -n 's/.*phrase_is_first_turn=\([a-z]*\).*/\1/p')
+
+# summary — the full JSONL path comes straight after the STAT line so it can
+# be pasted into another conversation's prompt
+echo "$STATS"
+echo
+echo "The exported new JSONL file is saved in:"
+echo "$OUT_PATH"
+echo
+
+if [[ -n "$COUNTED" && "$FIRST_TURN" == "yes" && "$COUNTED" -le 50 ]]; then
+  echo "✔ The phrase turn is the TOPMOST minimap rectangle (all $COUNTED msgs load on open)."
+else
+  echo "⚠ phrase turn is NOT guaranteed topmost (counted=$COUNTED, first_turn=$FIRST_TURN)."
+  echo "  Pi Web loads only the last 50 counted messages on open — use -n 50 or a later phrase."
+fi
+[[ -n "$DROPPED" && "$DROPPED" -gt 0 ]] && \
+  echo "  (cut $DROPPED counted messages from the session's end to fit the budget)"
+
+echo "Pi Web folder: $IMPORT_PROJECT"
 echo "Refresh Pi Web (${PI_WEB_URL}) — the import appears within ~30 s."
