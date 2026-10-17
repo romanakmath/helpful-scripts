@@ -45,14 +45,23 @@ Requires: `pi` (coding agent CLI) and `pi-read-session` on PATH.
 
 Same search flow as `pi-session-html`, but instead of HTML it writes a
 trimmed copy of the session (active branch only, starting at the first
-entry matching the phrase) into `~/.pi/agent/sessions/--imports--/` —
-the folder Pi Web scans. Refresh Pi Web and it appears within ~30 s,
-showing your anchor message as its first message.
+entry matching the phrase) into the review folder — one place to edit,
+import, and review sessions from different projects:
 
-Pi Web groups sessions by the `cwd` in the session header, **not** by the
-disk subfolder — so imports are stamped with the synthetic project path
-`/private/tmp/pi-web-imports` and appear as their own folder in the UI,
-never inside the source project. Override with
+```
+/Users/roman/Dropbox/Code/trading/pi-review-sessions/
+```
+
+The folder is symlinked from `~/.pi/agent/sessions/--imports--/` (which
+Pi Web scans) and its path is stamped as the session's `cwd`, so Pi Web
+groups imports under their own folder **pi-review-sessions** and opens
+the agent inside the real folder. Refresh Pi Web and an import appears
+within ~30 s, showing your anchor message as its first message.
+
+Note: `pi-review-sessions` sits under the `trading` folder, so sessions
+opened there also pick up `trading/AGENTS.md` as context.
+
+Override the label with:
 `PI_SESSION_IMPORT_PROJECT=/some/path pi-session-import …`.
 
 ```
@@ -66,8 +75,8 @@ recreates the imports project directory if it is missing (e.g. after a
 reboot, since /private/tmp is wiped).
 
 Pi Web reads `~/.pi/agent/sessions/<folder>/*.jsonl` (one level of
-subfolders) — not /private/tmp. To remove an import from Pi Web again,
-delete the file from `--imports--`.
+subfolders, symlinks followed). To remove an import from Pi Web again,
+delete the file from `pi-review-sessions`.
 
 ## pi-sessions — list exported session HTML files, open one
 
