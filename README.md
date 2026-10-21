@@ -1,5 +1,11 @@
 # helpful-scripts
 
+Small scripts to find, read, export, and import [Pi](https://github.com/earendil-works)
+coding-agent sessions (`~/.pi/agent/sessions/*.jsonl`) — built around Pi Web.
+
+**Running these on another machine/server?** See [`SERVER-SETUP.md`](SERVER-SETUP.md)
+for the one-time install and what works immediately vs what needs setup.
+
 Small standalone tools, not related to the trading codebase.
 
 ## pi-session-html — find a pi session by phrase, open it as HTML

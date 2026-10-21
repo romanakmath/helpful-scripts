@@ -44,10 +44,19 @@ SESSIONS_DIR="${HOME}/.pi/agent/sessions"
 # Physically stores imports; symlinked to the review folder below.
 IMPORT_DIR="${SESSIONS_DIR}/--imports--"
 # Label + agent working directory for imports. Pi Web groups sessions by this
-# path and runs the agent inside it, so it must exist. Kept as a real folder
-# (not /tmp) so it survives reboots and the agent can reach its files.
-IMPORT_PROJECT="${PI_SESSION_IMPORT_PROJECT:-/Users/roman/Dropbox/Code/trading/pi-review-sessions}"
-PI_WEB_URL="http://127.0.0.1:30141"
+# path and runs the agent inside it, so it must exist. Override with
+# PI_SESSION_IMPORT_PROJECT; on machines without the default path (e.g. a
+# server) it falls back to ~/pi-review-sessions.
+DEFAULT_REVIEW="/Users/roman/Dropbox/Code/trading/pi-review-sessions"
+if [[ -n "${PI_SESSION_IMPORT_PROJECT:-}" ]]; then
+  IMPORT_PROJECT="$PI_SESSION_IMPORT_PROJECT"
+elif [[ -d "$DEFAULT_REVIEW" ]]; then
+  IMPORT_PROJECT="$DEFAULT_REVIEW"
+else
+  IMPORT_PROJECT="${HOME}/pi-review-sessions"
+fi
+# Pi Web base URL (override with PI_WEB_URL when it runs on another port/host).
+PI_WEB_URL="${PI_WEB_URL:-http://127.0.0.1:30141}"
 AUTO=0
 MAX_MESSAGES=50
 PHRASE=""
